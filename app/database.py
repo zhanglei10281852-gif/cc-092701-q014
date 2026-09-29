@@ -293,6 +293,96 @@ CREATE TABLE IF NOT EXISTS compute_interventions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_compute_interventions_task ON compute_interventions(task_id,id);
+
+CREATE TABLE IF NOT EXISTS enroll_courses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    total_capacity INTEGER NOT NULL CHECK(total_capacity >= 0),
+    pending_count INTEGER NOT NULL DEFAULT 0 CHECK(pending_count >= 0),
+    confirmed_count INTEGER NOT NULL DEFAULT 0 CHECK(confirmed_count >= 0),
+    version INTEGER NOT NULL DEFAULT 1,
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS enroll_classes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id INTEGER NOT NULL REFERENCES enroll_courses(id) ON DELETE RESTRICT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    quota INTEGER NOT NULL CHECK(quota >= 0),
+    pending_count INTEGER NOT NULL DEFAULT 0 CHECK(pending_count >= 0),
+    confirmed_count INTEGER NOT NULL DEFAULT 0 CHECK(confirmed_count >= 0),
+    waitlist_seq INTEGER NOT NULL DEFAULT 0,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enroll_classes_course ON enroll_classes(course_id,id);
+CREATE TABLE IF NOT EXISTS enroll_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL REFERENCES enroll_classes(id) ON DELETE RESTRICT,
+    course_id INTEGER NOT NULL REFERENCES enroll_courses(id) ON DELETE RESTRICT,
+    student_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','confirmed','waitlisted','released')),
+    position INTEGER,
+    idempotency_key TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    confirm_ttl_hours INTEGER NOT NULL DEFAULT 48 CHECK(confirm_ttl_hours > 0),
+    confirm_deadline TEXT,
+    release_reason TEXT,
+    confirmed_at TEXT,
+    source_reservation_id INTEGER REFERENCES enroll_reservations(id),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(student_id, idempotency_key)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enroll_resv_active ON enroll_reservations(class_id, student_id) WHERE status IN ('pending','confirmed','waitlisted');
+CREATE INDEX IF NOT EXISTS idx_enroll_resv_class_status ON enroll_reservations(class_id,status,position,id);
+CREATE INDEX IF NOT EXISTS idx_enroll_resv_student ON enroll_reservations(student_id,status);
+CREATE INDEX IF NOT EXISTS idx_enroll_resv_expiry ON enroll_reservations(status,confirm_deadline);
+CREATE TABLE IF NOT EXISTS enroll_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_id INTEGER REFERENCES enroll_reservations(id) ON DELETE CASCADE,
+    class_id INTEGER,
+    course_id INTEGER NOT NULL,
+    student_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enroll_events_reservation ON enroll_events(reservation_id,id);
+CREATE INDEX IF NOT EXISTS idx_enroll_events_class ON enroll_events(class_id,id);
+CREATE TABLE IF NOT EXISTS enroll_promotions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL REFERENCES enroll_classes(id) ON DELETE RESTRICT,
+    course_id INTEGER NOT NULL REFERENCES enroll_courses(id) ON DELETE RESTRICT,
+    reservation_id INTEGER NOT NULL REFERENCES enroll_reservations(id) ON DELETE CASCADE,
+    student_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    rule_code TEXT NOT NULL,
+    rule_detail TEXT NOT NULL,
+    release_source_json TEXT NOT NULL,
+    class_version_before INTEGER NOT NULL,
+    class_version_after INTEGER NOT NULL,
+    course_version_before INTEGER NOT NULL,
+    course_version_after INTEGER NOT NULL,
+    class_quota INTEGER NOT NULL,
+    class_confirmed INTEGER NOT NULL,
+    course_capacity INTEGER NOT NULL,
+    course_confirmed INTEGER NOT NULL,
+    confirm_deadline TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enroll_promotions_class ON enroll_promotions(class_id,id);
 '''
 
 PERMISSIONS = [
