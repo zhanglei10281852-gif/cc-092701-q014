@@ -293,6 +293,99 @@ CREATE TABLE IF NOT EXISTS compute_interventions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_compute_interventions_task ON compute_interventions(task_id,id);
+
+CREATE TABLE IF NOT EXISTS training_courses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    term_label TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    total_capacity INTEGER NOT NULL CHECK(total_capacity >= 0),
+    reserved_count INTEGER NOT NULL DEFAULT 0 CHECK(reserved_count >= 0),
+    confirmed_count INTEGER NOT NULL DEFAULT 0 CHECK(confirmed_count >= 0),
+    reservation_seconds INTEGER NOT NULL CHECK(reservation_seconds > 0),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(ends_at > starts_at),
+    CHECK(reserved_count + confirmed_count <= total_capacity)
+);
+CREATE TABLE IF NOT EXISTS training_classes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id INTEGER NOT NULL REFERENCES training_courses(id) ON DELETE RESTRICT,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    capacity INTEGER NOT NULL CHECK(capacity >= 0),
+    reserved_count INTEGER NOT NULL DEFAULT 0 CHECK(reserved_count >= 0),
+    confirmed_count INTEGER NOT NULL DEFAULT 0 CHECK(confirmed_count >= 0),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(course_id, code),
+    CHECK(ends_at > starts_at),
+    CHECK(reserved_count + confirmed_count <= capacity)
+);
+CREATE INDEX IF NOT EXISTS idx_training_classes_course ON training_classes(course_id);
+CREATE TABLE IF NOT EXISTS training_enrollments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id INTEGER NOT NULL REFERENCES training_courses(id) ON DELETE RESTRICT,
+    class_id INTEGER NOT NULL REFERENCES training_classes(id) ON DELETE RESTRICT,
+    student_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('reserved','confirmed','waitlisted','cancelled','expired','transferred')),
+    priority INTEGER NOT NULL DEFAULT 50 CHECK(priority BETWEEN 0 AND 100),
+    waitlist_seq INTEGER,
+    waitlist_class_id INTEGER REFERENCES training_classes(id) ON DELETE RESTRICT,
+    reserved_expires_at TEXT NOT NULL DEFAULT '',
+    confirmed_at TEXT,
+    released_at TEXT,
+    release_source TEXT NOT NULL DEFAULT '' CHECK(release_source IN ('','cancel','expire','transfer')),
+    successor_enrollment_id INTEGER,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_training_enrollments_class ON training_enrollments(class_id, status);
+CREATE INDEX IF NOT EXISTS idx_training_enrollments_student ON training_enrollments(student_key, status);
+CREATE INDEX IF NOT EXISTS idx_training_enrollments_waitlist ON training_enrollments(waitlist_class_id, status, priority DESC, waitlist_seq);
+CREATE TABLE IF NOT EXISTS training_idempotency (
+    student_key TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK(operation IN ('reserve','confirm','cancel','transfer')),
+    enrollment_id INTEGER NOT NULL REFERENCES training_enrollments(id) ON DELETE RESTRICT,
+    request_digest TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(student_key, idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS training_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_key TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type IN ('reserve','confirm','release','promote','promote_skip','transfer','capacity_adjust','expire_scan')),
+    course_id INTEGER,
+    class_id INTEGER,
+    enrollment_id INTEGER,
+    origin_event_id INTEGER,
+    actor TEXT NOT NULL,
+    release_source TEXT NOT NULL DEFAULT '' CHECK(release_source IN ('','cancel','expire','transfer','capacity_increase')),
+    priority_rule TEXT NOT NULL DEFAULT '',
+    student_key TEXT NOT NULL DEFAULT '',
+    class_version_before INTEGER,
+    class_version_after INTEGER,
+    course_version_before INTEGER,
+    course_version_after INTEGER,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_training_events_batch ON training_events(batch_key, id);
+CREATE INDEX IF NOT EXISTS idx_training_events_class ON training_events(class_id, id);
+CREATE INDEX IF NOT EXISTS idx_training_events_enrollment ON training_events(enrollment_id, id);
 '''
 
 PERMISSIONS = [
